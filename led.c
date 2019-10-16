@@ -10,6 +10,7 @@
 #include <linux/delay.h>
 #include <linux/uaccess.h>
 #include <linux/string.h>
+#include <linux/ctype.h>
 
 
 // #define MAGIC_NO		100
@@ -72,36 +73,43 @@ static void vchar_hw_exit(led_dev_t * hw) {
   gpio_free(hw->blue_pin);
 }
 
-static int vchar_hw_wrire_data(led_dev_t * hw, char* kbuf, int len) {
-  long rgb_value = 0;
+static int vchar_hw_wrire_data(led_dev_t * hw, int start_reg , int len, char* kbuf) {
+	int rgb_value = -1;
 
-  if (!kstrtol(kbuf, 10, &rgb_value)) {
-	pr_debug("rgb value is %ld\n",rgb_value);
-	if (rgb_value < 8) {
-	  gpio_set_value(hw->blue_pin, !(rgb_value & 0b00000001));
-	  gpio_set_value(hw->green_pin, !(rgb_value & 0b00000010));
-	  gpio_set_value(hw->red_pin, !(rgb_value & 0b00000100));
-	  hw->value = rgb_value;
+	if (!kstrtouint(kbuf, 10, &rgb_value)) {
+		pr_debug("value write is %d\n",rgb_value);
+		if (rgb_value < 8) {
+		  gpio_set_value(hw->blue_pin, !(rgb_value & 0b00000001));
+		  gpio_set_value(hw->green_pin, !(rgb_value & 0b00000010));
+		  gpio_set_value(hw->red_pin, !(rgb_value & 0b00000100));
+		  hw->value = rgb_value; 
+		}
 	}
-  }
+  //ignore valid char
   return len; 
-
  }
 
-static int vchar_hw_read_data(led_dev_t * hw, char* kbuf, int len) {
+static int vchar_hw_read_data(led_dev_t * hw, int start_reg , int len, char* kbuf) {
   u8 rgb_value = 0;
   
+  // if (start_reg != 0)
+  // 	return 0;
+
   hw->value = 0;
-  
-  rgb_value = gpio_get_value(hw->blue_pin);
+
+  // invert logic IO
+  rgb_value = gpio_get_value(hw->blue_pin) != 0 ? 0 : 1;
   hw->value += rgb_value;
-  rgb_value = gpio_get_value(hw->green_pin);
+  rgb_value = gpio_get_value(hw->green_pin) != 0 ? 0 : 1;
   hw->value += (rgb_value<<1);
-  rgb_value = gpio_get_value(hw->red_pin);
+  rgb_value = gpio_get_value(hw->red_pin) != 0 ? 0 : 1;
   hw->value += (rgb_value<<2);
 
-  *kbuf = hw->value + 0x30;
-  return len; 
+  // *kbuf = hw->value + 0x30;
+  // pr_info("value read is %d\n",hw->value);
+
+  // return len; 
+  return sprintf(kbuf,"%d\n",hw->value); 
 }
 
 
@@ -128,12 +136,12 @@ static ssize_t dev_read(struct file *filep, char __user *user_buf, size_t len, l
 	if (NULL==kernel_buf) 
 		return -ENOMEM;
 
-	// num_bytes = vchar_hw_read_data(led_drv.hw, kernel_buf, len);
+	// num_bytes = vchar_hw_read_data(led_drv.hw, *offset, len, kernel_buf);
 	// device with ony 1 byte
 	if (0 != (*offset)) {
 		num_bytes = 0;
 	} else
-		num_bytes = vchar_hw_read_data(led_drv.hw, kernel_buf, 1);
+		num_bytes = vchar_hw_read_data(led_drv.hw, *offset, len, kernel_buf);
 
 	pr_info("Read %d bytes from HW\n", num_bytes);
 	if (num_bytes < 0)
@@ -157,7 +165,7 @@ static ssize_t dev_write(struct file *filep, const char __user *user_buf, size_t
 	if (copy_from_user(kernel_buf, user_buf, len)) 
 		return -EFAULT;
 
-	num_bytes = vchar_hw_wrire_data(led_drv.hw, kernel_buf, 1);
+	num_bytes = vchar_hw_wrire_data(led_drv.hw, *offset, len, kernel_buf);
 	if (num_bytes < 0)
 		return -EFAULT;
 	pr_info("Write %d bytes to HW\n", num_bytes);
